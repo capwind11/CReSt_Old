@@ -30,6 +30,7 @@ import org.apache.flink.api.java.typeutils.GenericTypeInfo;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
 import org.apache.flink.streaming.api.watermark.Watermark;
@@ -38,16 +39,22 @@ import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.triggers.Trigger;
 import org.apache.flink.streaming.api.windowing.triggers.TriggerResult;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+import org.example.flink.common.ConfigTool;
 import org.example.flink.nexmark.sinks.DummyLatencyCountingSink;
 import org.example.flink.nexmark.sources.BidSourceFunction;
+import org.example.partition.entity.AppConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.util.UUID;
+
+import static org.example.flink.common.ConfigTool.init;
+
 public class Query11 {
 
-    private static final Logger logger  = LoggerFactory.getLogger(Query11.class);
+    private static final Logger logger = LoggerFactory.getLogger(Query11.class);
 
     public static void main(String[] args) throws Exception {
 
@@ -55,7 +62,8 @@ public class Query11 {
         final ParameterTool params = ParameterTool.fromArgs(args);
 
         // set up the execution environment
-        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        final StreamExecutionEnvironment env = init(params);
+        AppConfig jobConfiguartion = (AppConfig) env.getConfig().getGlobalJobParameters();
 
         env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
         env.getConfig().setAutoWatermarkInterval(1000);
@@ -66,27 +74,23 @@ public class Query11 {
         final int srcRate = params.getInt("srcRate", 100000);
 
         DataStream<Bid> bids = env.addSource(new BidSourceFunction(srcRate))
-                .setParallelism(params.getInt("p-bid-source", 1))
                 .assignTimestampsAndWatermarks(new BidTimestampAssigner());
+        ConfigTool.configOperator(bids, jobConfiguartion);
 
         DataStream<Tuple2<Long, Long>> windowed = bids.keyBy(new KeySelector<Bid, Long>() {
             @Override
             public Long getKey(Bid b) throws Exception {
                 return b.bidder;
             }
-        })
-                .window(EventTimeSessionWindows.withGap(Time.seconds(10)))
-                .trigger(new MaxLogEventsTrigger())
-                .aggregate(new CountBidsPerSession()).setParallelism(params.getInt("p-window", 1))
-                .name("Session Window");
+        }).window(EventTimeSessionWindows.withGap(Time.seconds(10))).trigger(new MaxLogEventsTrigger()).aggregate(new CountBidsPerSession()).name("Session Window");
+        ConfigTool.configOperator(windowed, jobConfiguartion);
 
         GenericTypeInfo<Object> objectTypeInfo = new GenericTypeInfo<>(Object.class);
-        windowed.transform("DummyLatencySink", objectTypeInfo, new DummyLatencyCountingSink<>(logger))
-                .setParallelism(params.getInt("p-window", 1));
-
+        SingleOutputStreamOperator<Object> latencySink = windowed.transform("DummyLatencySink", objectTypeInfo, new DummyLatencyCountingSink<>(logger));
+        ConfigTool.configOperator(latencySink, jobConfiguartion);
 
         // execute program
-        env.execute("Nexmark Query11");
+        env.execute("Nexmark-Query11_" + jobConfiguartion.getMode() + "_" + UUID.randomUUID());
     }
 
     private static final class MaxLogEventsTrigger extends Trigger<Bid, TimeWindow> {

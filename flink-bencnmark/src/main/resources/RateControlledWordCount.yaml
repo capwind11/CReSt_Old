@@ -1,0 +1,11 @@
+# basic info
+name: RateControlledWordCount
+partition:
+  local:
+    parallelism: 2
+  remote:
+    parallelism: 4
+  operators_border:
+    -
+
+

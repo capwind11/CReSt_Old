@@ -4,11 +4,19 @@ import org.apache.flink.api.common.JobExecutionResult;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.DataStreamSink;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.co.CoFlatMapFunction;
 import org.apache.flink.streaming.api.functions.sink.SinkFunction;
 import org.apache.flink.util.Collector;
+import org.example.flink.common.ConfigTool;
 import org.example.flink.wordcount.sources.RateControlledSourceFunction;
+import org.example.partition.entity.AppConfig;
+
+import java.util.UUID;
+
+import static org.example.flink.common.ConfigTool.init;
 
 public class TwoInputsWordCount {
 
@@ -17,58 +25,49 @@ public class TwoInputsWordCount {
 		// Checking input parameters
 		final ParameterTool params = ParameterTool.fromArgs(args);
 
-		if (!params.has("p1") || !params.has("p2") || !params.has("p3")) {
-			System.out.println("Use --p1 --p2 --p3 --sentence-size -- source-rate"
-					+ "to specify the parallelism of the source, tokenizer, and count operators respectively,"
-					+ "the sentence size, and the source output rate.");
-			System.exit(-1);
-		}
-
-		// set up the execution environment
-		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-		env.disableOperatorChaining();
-
-		// make parameters available in the web interface
-		env.getConfig().setGlobalJobParameters(params);
+		final StreamExecutionEnvironment env = init(params);
+		AppConfig jobConfiguartion = (AppConfig) env.getConfig().getGlobalJobParameters();
 
 		final DataStream<String> textOne = env.addSource(
-				new RateControlledSourceFunction(
-						params.getInt("source-rate", 80000),
-						params.getInt("sentence-size", 100)))
-				.name("Source One")
-					.setParallelism(params.getInt("p1", 1));
+						new RateControlledSourceFunction(
+								params.getInt("source-rate", 80000),
+								params.getInt("sentence-size", 100)))
+				.name("Source One");
+		ConfigTool.configOperator(textOne, jobConfiguartion);
 
 		final DataStream<String> textTwo = env.addSource(
-				new RateControlledSourceFunction(
-						params.getInt("source-rate", 80000),
-						params.getInt("sentence-size", 100)))
-				.name("Source Two")
-				.setParallelism(params.getInt("p1", 1));
+						new RateControlledSourceFunction(
+								params.getInt("source-rate", 80000),
+								params.getInt("sentence-size", 100)))
+				.name("Source Two");
+		ConfigTool.configOperator(textTwo, jobConfiguartion);
 
 		// split up the lines in pairs (2-tuples) containing:
 		// (word,1)
-		DataStream<Tuple2<String, Integer>> counts = textOne.connect(textTwo)
+		DataStream<Tuple2<String, Integer>> flatMapTokenizer = textOne.connect(textTwo)
 				.flatMap(new Tokenizer())
-					.name("FlatMap tokenizer")
-					.setParallelism(params.getInt("p2", 1))
-				.keyBy(0)
-				.sum(1)
-					.name("Count op")
-					.setParallelism(params.getInt("p3", 1));
-		// write to dummy sink
-		counts.addSink(new SinkFunction<Tuple2<String, Integer>>() {
-			private static final long serialVersionUID = 1L;
+				.name("FlatMap tokenizer");
+		ConfigTool.configOperator(flatMapTokenizer, jobConfiguartion);
 
-			public void invoke(Tuple2<String, Integer> value) {
-				// nop
-			}
-		})
-				.name("Dummy Sink")
-				.setParallelism(params.getInt("p3", 1));
+		SingleOutputStreamOperator<Tuple2<String, Integer>> counts = flatMapTokenizer.keyBy(0)
+				.sum(1)
+				.name("Count op");
+		ConfigTool.configOperator(counts, jobConfiguartion);
+
+		// write to dummy sink
+		DataStreamSink<Tuple2<String, Integer>> dummySink = counts.addSink(new SinkFunction<Tuple2<String, Integer>>() {
+					private static final long serialVersionUID = 1L;
+
+					public void invoke(Tuple2<String, Integer> value) {
+						// nop
+					}
+				})
+				.name("Dummy Sink");
+		ConfigTool.configOperator(dummySink, jobConfiguartion);
 
 		// execute program
-		JobExecutionResult res = env.execute("Two Input Streaming WordCount");
-		System.err.println("Execution time: " + res.getNetRuntime());
+		JobExecutionResult res = env.execute("Two-Input-Streaming-WordCount_" + jobConfiguartion.getMode() + "_" + UUID.randomUUID());
+//		System.err.println("Execution time: " + res.getNetRuntime());
 	}
 
 	// *************************************************************************

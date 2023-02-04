@@ -1,4 +1,4 @@
-package org.example.common;
+package org.example.flink.common;
 
 import java.io.BufferedReader;
 import java.io.IOException;

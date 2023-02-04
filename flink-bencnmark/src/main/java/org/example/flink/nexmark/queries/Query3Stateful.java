@@ -36,18 +36,23 @@ import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.co.RichCoFlatMapFunction;
 import org.apache.flink.util.Collector;
+import org.example.flink.common.ConfigTool;
 import org.example.flink.nexmark.sinks.DummyLatencyCountingSink;
 import org.example.flink.nexmark.sources.AuctionSourceFunction;
 import org.example.flink.nexmark.sources.PersonSourceFunction;
+import org.example.partition.entity.AppConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.UUID;
 
-    public class Query3Stateful {
+import static org.example.flink.common.ConfigTool.init;
 
-    private static final Logger logger  = LoggerFactory.getLogger(Query3Stateful.class);
+public class Query3Stateful {
+
+    private static final Logger logger = LoggerFactory.getLogger(Query3Stateful.class);
 
     public static void main(String[] args) throws Exception {
 
@@ -55,61 +60,58 @@ import java.util.HashSet;
         final ParameterTool params = ParameterTool.fromArgs(args);
 
         // set up the execution environment
-        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        final StreamExecutionEnvironment env = init(params);
+        AppConfig jobConfiguartion = (AppConfig) env.getConfig().getGlobalJobParameters();
 
         // enable latency tracking
         env.getConfig().setLatencyTrackingInterval(5000);
-
-        env.disableOperatorChaining();
 
         final int auctionSrcRate = params.getInt("auction-srcRate", 20000);
 
         final int personSrcRate = params.getInt("person-srcRate", 10000);
 
-        DataStream<Auction> auctions = env.addSource(new AuctionSourceFunction(auctionSrcRate))
-                .name("Custom Source: Auctions")
-                .setParallelism(params.getInt("p-auction-source", 1));
+        DataStream<Auction> auctions = env.addSource(new AuctionSourceFunction(auctionSrcRate)).name("Custom Source: Auctions");
+        ConfigTool.configOperator(auctions, jobConfiguartion);
 
-        DataStream<Person> persons = env.addSource(new PersonSourceFunction(personSrcRate))
-                .name("Custom Source: Persons")
-                .setParallelism(params.getInt("p-person-source", 1))
-                .filter(new FilterFunction<Person>() {
-                    @Override
-                    public boolean filter(Person person) throws Exception {
-                        return (person.state.equals("OR") || person.state.equals("ID") || person.state.equals("CA"));
-                    }
-                })
-                .setParallelism(params.getInt("p-person-source", 1));
+        DataStream<Person> persons = env.addSource(new PersonSourceFunction(personSrcRate)).name("Custom Source: Persons");
+        ConfigTool.configOperator(persons, jobConfiguartion);
+
+        DataStream<Person> personFilter = persons.filter(new FilterFunction<Person>() {
+            @Override
+            public boolean filter(Person person) throws Exception {
+                return (person.state.equals("OR") || person.state.equals("ID") || person.state.equals("CA"));
+            }
+        });
+        ConfigTool.configOperator(personFilter, jobConfiguartion);
 
         // SELECT Istream(P.name, P.city, P.state, A.id)
         // FROM Auction A [ROWS UNBOUNDED], Person P [ROWS UNBOUNDED]
         // WHERE A.seller = P.id AND (P.state = `OR' OR P.state = `ID' OR P.state = `CA')
 
-      KeyedStream<Auction, Long> keyedAuctions =
-              auctions.keyBy(new KeySelector<Auction, Long>() {
-                 @Override
-                 public Long getKey(Auction auction) throws Exception {
-                    return auction.seller;
-                 }
-              });
+        KeyedStream<Auction, Long> keyedAuctions = auctions.keyBy(new KeySelector<Auction, Long>() {
+            @Override
+            public Long getKey(Auction auction) throws Exception {
+                return auction.seller;
+            }
+        });
 
-      KeyedStream<Person, Long> keyedPersons =
-                persons.keyBy(new KeySelector<Person, Long>() {
-                    @Override
-                    public Long getKey(Person person) throws Exception {
-                        return person.id;
-                    }
-                });
-      
-      DataStream<Tuple4<String, String, String, Long>> joined = keyedAuctions.connect(keyedPersons)
-              .flatMap(new JoinPersonsWithAuctions()).name("Incremental join").setParallelism(params.getInt("p-join", 1));
+        KeyedStream<Person, Long> keyedPersons = personFilter.keyBy(new KeySelector<Person, Long>() {
+            @Override
+            public Long getKey(Person person) throws Exception {
+                return person.id;
+            }
+        });
+
+        DataStream<Tuple4<String, String, String, Long>> joined = keyedAuctions.connect(keyedPersons).flatMap(new JoinPersonsWithAuctions()).name("Incremental join");
+        ConfigTool.configOperator(joined, jobConfiguartion);
 
         GenericTypeInfo<Object> objectTypeInfo = new GenericTypeInfo<>(Object.class);
-        joined.transform("Sink", objectTypeInfo, new DummyLatencyCountingSink<>(logger))
-                .setParallelism(params.getInt("p-join", 1));
+        DataStream<Object> sink = joined.transform("Sink", objectTypeInfo, new DummyLatencyCountingSink<>(logger));
+
+        ConfigTool.configOperator(sink, jobConfiguartion);
 
         // execute program
-        env.execute("Nexmark Query3 stateful");
+        env.execute("Nexmark-Query3-stateful_" + jobConfiguartion.getMode() + "_" + UUID.randomUUID());
     }
 
     private static final class JoinPersonsWithAuctions extends RichCoFlatMapFunction<Auction, Person, Tuple4<String, String, String, Long>> {

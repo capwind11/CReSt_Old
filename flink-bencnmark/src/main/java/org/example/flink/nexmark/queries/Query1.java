@@ -25,14 +25,20 @@ import org.apache.flink.api.java.typeutils.GenericTypeInfo;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.example.flink.common.ConfigTool;
 import org.example.flink.nexmark.sinks.DummyLatencyCountingSink;
 import org.example.flink.nexmark.sources.BidSourceFunction;
+import org.example.partition.entity.AppConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.UUID;
+
+import static org.example.flink.common.ConfigTool.init;
+
 public class Query1 {
 
-    private static final Logger logger  = LoggerFactory.getLogger(Query1.class);
+    private static final Logger logger = LoggerFactory.getLogger(Query1.class);
 
     public static void main(String[] args) throws Exception {
 
@@ -43,37 +49,36 @@ public class Query1 {
 
         final int srcRate = params.getInt("srcRate", 100000);
 
-        // set up the execution environment
-        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
-        env.disableOperatorChaining();
+        final StreamExecutionEnvironment env = init(params);
+        AppConfig jobConfiguartion = (AppConfig) env.getConfig().getGlobalJobParameters();
 
         // enable latency tracking
         env.getConfig().setLatencyTrackingInterval(5000);
 
         DataStream<Bid> bids = env.addSource(new BidSourceFunction(srcRate))
-                .setParallelism(params.getInt("p-source", 1))
                 .name("Bids Source")
                 .uid("Bids-Source");
+        ConfigTool.configOperator(bids, jobConfiguartion);
+
         // SELECT auction, DOLTOEUR(price), bidder, datetime
-        DataStream<Tuple4<Long, Long, Long, Long>> mapped  = bids.map(new MapFunction<Bid, Tuple4<Long, Long, Long, Long>>() {
+        DataStream<Tuple4<Long, Long, Long, Long>> mapped = bids.map(new MapFunction<Bid, Tuple4<Long, Long, Long, Long>>() {
             @Override
             public Tuple4<Long, Long, Long, Long> map(Bid bid) throws Exception {
                 return new Tuple4<>(bid.auction, dollarToEuro(bid.price, exchangeRate), bid.bidder, bid.dateTime);
             }
-        }).setParallelism(params.getInt("p-map", 1))
-                .name("Mapper")
-                .uid("Mapper");
+        }).name("Mapper").uid("Mapper");
 
+        ConfigTool.configOperator(mapped, jobConfiguartion);
 
         GenericTypeInfo<Object> objectTypeInfo = new GenericTypeInfo<>(Object.class);
-        mapped.transform("DummyLatencySink", objectTypeInfo, new DummyLatencyCountingSink<>(logger))
-                .setParallelism(params.getInt("p-map", 1))
-        .name("Latency Sink")
-        .uid("Latency-Sink");
+        DataStream<Object> latencySink = mapped.transform("DummyLatencySink", objectTypeInfo, new DummyLatencyCountingSink<>(logger))
+                .name("Latency Sink")
+                .uid("Latency-Sink");
+
+        ConfigTool.configOperator(latencySink, jobConfiguartion);
 
         // execute program
-        env.execute("Nexmark Query1");
+        env.execute("Nexmark-Query1_" + jobConfiguartion.getMode() + "_" + UUID.randomUUID());
     }
 
     private static long dollarToEuro(long dollarPrice, float rate) {

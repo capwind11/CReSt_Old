@@ -27,23 +27,30 @@ import org.apache.flink.api.java.typeutils.GenericTypeInfo;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.util.Collector;
+import org.example.flink.common.ConfigTool;
 import org.example.flink.nexmark.sinks.DummyLatencyCountingSink;
 import org.example.flink.nexmark.sources.AuctionSourceFunction;
 import org.example.flink.nexmark.sources.PersonSourceFunction;
+import org.example.partition.entity.AppConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.util.UUID;
+
+import static org.example.flink.common.ConfigTool.init;
+
 public class Query8 {
 
-    private static final Logger logger  = LoggerFactory.getLogger(Query8.class);
+    private static final Logger logger = LoggerFactory.getLogger(Query8.class);
 
     public static void main(String[] args) throws Exception {
 
@@ -51,7 +58,8 @@ public class Query8 {
         final ParameterTool params = ParameterTool.fromArgs(args);
 
         // set up the execution environment
-        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        final StreamExecutionEnvironment env = init(params);
+        AppConfig jobConfiguartion = (AppConfig) env.getConfig().getGlobalJobParameters();
 
         env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
         env.getConfig().setAutoWatermarkInterval(1000);
@@ -63,17 +71,15 @@ public class Query8 {
 
         final int personSrcRate = params.getInt("person-srcRate", 30000);
 
-        env.setParallelism(params.getInt("p-window", 1));
-
         DataStream<Person> persons = env.addSource(new PersonSourceFunction(personSrcRate))
                 .name("Custom Source: Persons")
-                .setParallelism(params.getInt("p-person-source", 1))
                 .assignTimestampsAndWatermarks(new PersonTimestampAssigner());
+        ConfigTool.configOperator(persons, jobConfiguartion);
 
         DataStream<Auction> auctions = env.addSource(new AuctionSourceFunction(auctionSrcRate))
                 .name("Custom Source: Auctions")
-                .setParallelism(params.getInt("p-auction-source", 1))
                 .assignTimestampsAndWatermarks(new AuctionTimestampAssigner());
+        ConfigTool.configOperator(auctions, jobConfiguartion);
 
         // SELECT Rstream(P.id, P.name, A.reserve)
         // FROM Person [RANGE 1 HOUR] P, Auction [RANGE 1 HOUR] A
@@ -90,22 +96,21 @@ public class Query8 {
                             public Long getKey(Auction a) {
                                 return a.seller;
                             }
-                        })
-                .window(TumblingEventTimeWindows.of(Time.seconds(10)))
-                .apply(new FlatJoinFunction<Person, Auction, Tuple3<Long, String, Long>>() {
-                    @Override
-                    public void join(Person p, Auction a, Collector<Tuple3<Long, String, Long>> out) {
-                        out.collect(new Tuple3<>(p.id, p.name, a.reserve));
-                    }
-                });
-
+                        }).window(TumblingEventTimeWindows.of(Time.seconds(10))).apply(new FlatJoinFunction<Person, Auction, Tuple3<Long, String, Long>>() {
+                            @Override
+                            public void join(Person p, Auction a, Collector<Tuple3<Long, String, Long>> out) {
+                                out.collect(new Tuple3<>(p.id, p.name, a.reserve));
+                            }
+                        });
+        ConfigTool.configOperator(joined, jobConfiguartion);
 
         GenericTypeInfo<Object> objectTypeInfo = new GenericTypeInfo<>(Object.class);
-        joined.transform("DummyLatencySink", objectTypeInfo, new DummyLatencyCountingSink<>(logger))
-                .setParallelism(params.getInt("p-window", 1));
+        DataStream<Object> latencySink =
+                joined.transform("DummyLatencySink", objectTypeInfo, new DummyLatencyCountingSink<>(logger));
+        ConfigTool.configOperator(latencySink, jobConfiguartion);
 
         // execute program
-        env.execute("Nexmark Query8");
+        env.execute("Nexmark-Query8_" + jobConfiguartion.getMode() + "_" + UUID.randomUUID());
     }
 
     private static final class PersonTimestampAssigner implements AssignerWithPeriodicWatermarks<Person> {

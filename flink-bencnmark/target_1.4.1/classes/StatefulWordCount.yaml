@@ -1,0 +1,8 @@
+# basic info
+name: StatefulWordCount
+partition:
+  local_parallelism: 2
+  remote_parallelism: 4
+  # use operators uid to mark the partitioning points
+  operators_border:
+    -

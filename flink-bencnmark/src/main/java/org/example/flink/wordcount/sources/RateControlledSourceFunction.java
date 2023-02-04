@@ -1,7 +1,7 @@
 package org.example.flink.wordcount.sources;
 
 import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunction;
-import org.example.common.RandomSentenceGenerator;
+import org.example.flink.common.RandomSentenceGenerator;
 
 public class RateControlledSourceFunction extends RichParallelSourceFunction<String> {
 

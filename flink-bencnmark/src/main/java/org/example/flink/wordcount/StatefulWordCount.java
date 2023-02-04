@@ -11,53 +11,66 @@ import org.apache.flink.api.java.typeutils.GenericTypeInfo;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.Collector;
+import org.example.flink.common.ConfigTool;
 import org.example.flink.nexmark.sinks.DummySink;
 import org.example.flink.wordcount.sources.RateControlledSourceFunction;
+import org.example.partition.entity.AppConfig;
+
+import java.util.UUID;
+
+import static org.example.flink.common.ConfigTool.init;
+
 
 public class StatefulWordCount {
 
 	public static void main(String[] args) throws Exception {
 
-		// Checking input parameters
 		final ParameterTool params = ParameterTool.fromArgs(args);
 
-		// set up the execution environment
-		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
-		// make parameters available in the web interface
-		env.getConfig().setGlobalJobParameters(params);
+		final StreamExecutionEnvironment env = init(params);
+		AppConfig jobConfiguration = (AppConfig) env.getConfig().getGlobalJobParameters();
 
 		final DataStream<String> text = env.addSource(
-				new RateControlledSourceFunction(
-						params.getInt("source-rate", 80000),
-						params.getInt("sentence-size", 100)))
-				.uid("sentence-source")
-					.setParallelism(params.getInt("p1", 1));
+								new RateControlledSourceFunction(
+										params.getInt("source-rate", 800000),
+										params.getInt("sentence-size", 100))).uid("sentence-source");
+		ConfigTool.configOperator(text, jobConfiguration);
 
-		// split up the lines in pairs (2-tuples) containing:
+		// split up the lines in pairs
+		// (2-tuples) containing:
 		// (word,1)
-		DataStream<Tuple2<String, Long>> counts = text.rebalance()
+		DataStream<Tuple2<String, Long>> wordTuples = text.rebalance()
 				.flatMap(new Tokenizer())
 				.name("Splitter FlatMap")
-				.uid("flatmap")
-					.setParallelism(params.getInt("p2", 1))
-				.keyBy(0)
+				.uid("flatmap");
+		ConfigTool.configOperator(wordTuples, jobConfiguration);
+
+		DataStream<Tuple2<String, Long>> counts
+				= wordTuples.keyBy(0)
 				.flatMap(new CountWords())
 				.name("Count")
-				.uid("count")
-					.setParallelism(params.getInt("p3", 1));
+				.uid("count");
+		ConfigTool.configOperator(counts, jobConfiguration);
 
 		GenericTypeInfo<Object> objectTypeInfo = new GenericTypeInfo<>(Object.class);
 		// write to dummy sink
-		counts.transform("Latency Sink", objectTypeInfo,
-				new DummySink<>())
-				.uid("dummy-sink")
-				.setParallelism(params.getInt("p3", 1));
+		SingleOutputStreamOperator<Object> latencySink = counts.transform("Latency Sink", objectTypeInfo,
+						new DummySink<>())
+				.uid("dummy-sink");
+		ConfigTool.configOperator(latencySink,
+				jobConfiguration);
 
 		// execute program
-		env.execute("Stateful WordCount");
+		if (params.has("job-name")) {
+			System.out.println(params.get("job-name"));
+			env.execute(params.get("job-name"));
+		} else {
+			env.execute("Stateful-WordCount_" + jobConfiguration.getMode() + "_" + UUID.randomUUID());
+		}
+		System.out.println(params.toMap());
 	}
 
 	// *************************************************************************

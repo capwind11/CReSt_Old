@@ -26,10 +26,16 @@ import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.Collector;
+import org.example.flink.common.ConfigTool;
 import org.example.flink.nexmark.sinks.DummyLatencyCountingSink;
 import org.example.flink.nexmark.sources.BidSourceFunction;
+import org.example.partition.entity.AppConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.UUID;
+
+import static org.example.flink.common.ConfigTool.init;
 
 public class Query2 {
 
@@ -40,18 +46,16 @@ public class Query2 {
         // Checking input parameters
         final ParameterTool params = ParameterTool.fromArgs(args);
 
-        // set up the execution environment
-        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
-        env.disableOperatorChaining();
+        final StreamExecutionEnvironment env = init(params);
+        AppConfig jobConfiguartion = (AppConfig) env.getConfig().getGlobalJobParameters();
 
         // enable latency tracking
         env.getConfig().setLatencyTrackingInterval(5000);
 
         final int srcRate = params.getInt("srcRate", 100000);
 
-        DataStream<Bid> bids = env.addSource(new BidSourceFunction(srcRate)).setParallelism(params.getInt("p-source", 1));
-
+        DataStream<Bid> bids = env.addSource(new BidSourceFunction(srcRate)).name("Bids-Source");
+        ConfigTool.configOperator(bids, jobConfiguartion);
         // SELECT Rstream(auction, price)
         // FROM Bid [NOW]
         // WHERE auction = 1007 OR auction = 1020 OR auction = 2001 OR auction = 2019 OR auction = 2087;
@@ -60,18 +64,19 @@ public class Query2 {
                 .flatMap(new FlatMapFunction<Bid, Tuple2<Long, Long>>() {
                     @Override
                     public void flatMap(Bid bid, Collector<Tuple2<Long, Long>> out) throws Exception {
-                        if(bid.auction % 1007 == 0 || bid.auction % 1020 == 0 || bid.auction % 2001 == 0 || bid.auction % 2019 == 0 || bid.auction % 2087 == 0) {
+                        if (bid.auction % 1007 == 0 || bid.auction % 1020 == 0 || bid.auction % 2001 == 0 || bid.auction % 2019 == 0 || bid.auction % 2087 == 0) {
                             out.collect(new Tuple2<>(bid.auction, bid.price));
                         }
                     }
-                }).setParallelism(params.getInt("p-flatMap", 1));
+                }).name("Converted");
+        ConfigTool.configOperator(converted, jobConfiguartion);
 
         GenericTypeInfo<Object> objectTypeInfo = new GenericTypeInfo<>(Object.class);
-        converted.transform("DummyLatencySink", objectTypeInfo, new DummyLatencyCountingSink<>(logger))
-                .setParallelism(params.getInt("p-flatMap", 1));
+        DataStream<Object> dummyLatencySink = converted.transform("DummyLatencySink", objectTypeInfo, new DummyLatencyCountingSink<>(logger)).name("Latency Sink");
+        ConfigTool.configOperator(dummyLatencySink, jobConfiguartion);
 
-        // execute program
-        env.execute("Nexmark Query2");
+        // execute programß
+        env.execute("Nexmark-Query2_" + jobConfiguartion.getMode() + "_" + UUID.randomUUID());
     }
 
 }
