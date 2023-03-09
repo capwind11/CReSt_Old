@@ -49,6 +49,7 @@ public class RateControlledWordCount {
 
 			public void invoke(Tuple2<String, Integer> value) {
 				// nop
+				int a = 1;
 			}
 		}).name("Dummy Sink");
 

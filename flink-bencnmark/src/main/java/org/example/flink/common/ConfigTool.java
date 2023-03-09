@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSON;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.RestOptions;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSink;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -63,9 +64,16 @@ public class ConfigTool {
 
         if ((appConfig.getDebug() != null && appConfig.getDebug()) || (params.has("debug") && params.getBoolean("debug"))) {
             Configuration configuration = new Configuration();
-            configuration.setString("rest.port", "31111"); //指定 Flink Web UI 端口为9091
+//            Configuration conf = new Configuration();
+//            StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(conf);
+            // 定义一个配置 import org.apache.flink.configuration.Configuration;包下
+//            Configuration configuration = new Configuration();
+
+// 指定本地WEB-UI端口号
+            configuration.setInteger(RestOptions.PORT, 8082);
             configuration.setString("taskmanager.numberOfTaskSlots", "12");
-            env = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(configuration);
+// 执行环境使用当前配置
+            env = StreamExecutionEnvironment.getExecutionEnvironment(configuration);
         } else {
             env = StreamExecutionEnvironment.getExecutionEnvironment();
         }

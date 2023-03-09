@@ -1,0 +1,39 @@
+kafka.brokers:
+    - "localhost"
+kafka.port: 9092
+kafka.topic: "ad-events"
+kafka.partitions: 1
+kafka.zookeeper.path: /
+
+akka.zookeeper.path: /akkaQuery
+
+zookeeper.servers:
+    - "localhost"
+zookeeper.port: 2181
+
+redis.host: "localhost"
+
+process.hosts: 1
+process.cores: 4
+
+#STORM Specific
+storm.workers: 1
+storm.ackers: 2
+storm.highcard.redisthreads: 20
+
+#Spark Specific
+spark.batchtime: 2000
+
+#Flink Specific
+group.id: "flink_yahoo_benchmark"
+flink.checkpoint.interval: 60000
+add.result.sink: 1
+flink.highcard.checkpointURI: "file:///tmp/checkpoints"
+redis.threads: 20
+
+#EventGenerator
+use.local.event.generator: 1
+redis.flush: 1
+redis.db: 0
+load.target.hz: 10000000
+num.campaigns: 1000000
