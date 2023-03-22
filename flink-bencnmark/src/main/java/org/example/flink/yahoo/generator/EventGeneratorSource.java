@@ -1,7 +1,7 @@
 package org.example.flink.yahoo.generator;
 
 
-import org.example.flink.yahoo.BenchmarkConfig;
+import org.example.flink.common.BenchmarkConfig;
 
 import java.util.*;
 

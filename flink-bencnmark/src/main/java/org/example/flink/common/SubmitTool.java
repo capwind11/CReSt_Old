@@ -55,7 +55,6 @@ public class SubmitTool {
 //            JobVertex jobVertex = jobGraph.getVerticesAsArray()[0];
 //            jobVertex.setResources();
 //            jobVertex.setSlotSharingGroup();
-
             CompletableFuture<JobID> result = client.submitJob(jobGraph);
             JobID jobId = result.get();
             System.out.println("job: [" + jobId.toHexString() + "] 提交完成！");

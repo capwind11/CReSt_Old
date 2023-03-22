@@ -8,7 +8,6 @@ import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunctio
  * you require.
  */
 public abstract class LoadGeneratorSource<T> extends RichParallelSourceFunction<T> {
-
   private boolean running = true;
 
   private final int loadTargetHz;
@@ -31,7 +30,6 @@ public abstract class LoadGeneratorSource<T> extends RichParallelSourceFunction<
   @Override
   public void run(SourceContext<T> sourceContext) throws Exception {
     int elements = loadPerTimeslice();
-
     while (running) {
       long emitStartTime = System.currentTimeMillis();
       for (int i = 0; i < elements; i++) {

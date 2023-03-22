@@ -3,37 +3,31 @@
  * Licensed under the terms of the Apache License 2.0. Please see LICENSE file in the project root for terms.
  */
 package org.example.flink.yahoo;
+
 import edu.umd.cs.findbugs.annotations.Nullable;
-import org.apache.flink.api.dag.Transformation;
-import org.apache.flink.configuration.ConfigConstants;
-import org.apache.flink.configuration.RestOptions;
-import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
-import org.apache.flink.streaming.api.functions.sink.SinkFunction;
-import org.apache.flink.streaming.api.graph.StreamGraph;
-import org.apache.flink.streaming.api.watermark.Watermark;
-import org.example.flink.common.BenchmarkConfig;
-import org.example.flink.common.ConfigToolV2;
-import org.example.flink.v1.nexmark.sinks.DummySink;
-import org.example.flink.yahoo.common.RedisAdCampaignCache;
-import org.example.flink.yahoo.common.ThroughputLogger;
-import org.example.flink.yahoo.generator.EventGeneratorSource;
-import org.example.flink.yahoo.generator.RedisHelper;
 import net.minidev.json.JSONObject;
 import net.minidev.json.parser.JSONParser;
 import org.apache.flink.api.common.functions.*;
 import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.api.java.tuple.Tuple;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.api.java.tuple.Tuple7;
+import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.RestOptions;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.DataStreamSink;
 import org.apache.flink.streaming.api.datastream.WindowedStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunction;
 import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
+import org.apache.flink.streaming.api.graph.StreamGraph;
+import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.triggers.Trigger;
 import org.apache.flink.streaming.api.windowing.triggers.TriggerResult;
@@ -41,6 +35,11 @@ import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer;
 import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
 import org.apache.flink.util.Collector;
+import org.example.flink.common.BenchmarkConfig;
+import org.example.flink.yahoo.common.RedisAdCampaignCache;
+import org.example.flink.yahoo.common.ThroughputLogger;
+import org.example.flink.yahoo.generator.EventGeneratorSource;
+import org.example.flink.yahoo.generator.RedisHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import redis.clients.jedis.Jedis;
@@ -57,17 +56,19 @@ import java.util.concurrent.TimeUnit;
  * This job variant uses Flinks built-in windowing and triggering support to compute the windows
  * and trigger when each window is complete as well as once per second.
  */
-public class AdvertisingTopologyFlinkWindows {
+public class AdvertisingTopologyFlinkWindowsV1 {
 
-  private static final Logger LOG = LoggerFactory.getLogger(AdvertisingTopologyFlinkWindows.class);
+  private static final Logger LOG = LoggerFactory.getLogger(AdvertisingTopologyFlinkWindowsV1.class);
+
+  private static Map<String, List<String>> campaigns;
 
   public static void main(final String[] args) throws Exception {
 
     BenchmarkConfig config = BenchmarkConfig.fromArgs(args);
-    ConfigToolV2 configToolV2 = new ConfigToolV2(args);
+
     StreamExecutionEnvironment env = setupEnvironment(config);
-//    env.disableOperatorChaining();
-//    env.setParallelism(1);
+    env.disableOperatorChaining();
+    env.setParallelism(1);
     DataStream<String> rawMessageStream = streamSource(config, env);
 
     // rawMessageStream.getTransformation().setSlotSharingGroup("local");
@@ -94,19 +95,19 @@ public class AdvertisingTopologyFlinkWindows {
       windowStream.apply(sumReduceFunction(), sumWindowFunction());
 
     // write result to redis
-//    result.addSink(new RedisResultSinkOptimized(config));
+    DataStreamSink<Tuple3<String, String, Long>> sink = result.addSink(new RedisResultSinkOptimized(config)).setParallelism(16);
 //    if (config.getParameters().has("add.result.sink.optimized")) {
 //      result.addSink(new RedisResultSinkOptimized(config));
 //    } else {
 ////      result.addSink(new DummySink<>());
 //      result.addSink(new RedisResultSink(config));
 //    }
-    result.addSink(new SinkFunction<Tuple3<String, String, Long>>() {
-
-      @Override
-      public void invoke(Tuple3<String, String, Long> value, Context ctx) throws Exception {}
-    });
-    configToolV2.reconfigurationAndSubmit(env);
+//    result.addSink(new SinkFunction<Tuple3<String, String, Long>>() {
+//
+//      @Override
+//      public void invoke(Tuple3<String, String, Long> value, Context ctx) throws Exception {}
+//    });
+    env.execute("AdvertisingTopologyFlinkWindows");
   }
 
   /**
@@ -121,7 +122,7 @@ public class AdvertisingTopologyFlinkWindows {
       source = eventGenerator;
       sourceName = "EventGenerator";
 
-      Map<String, List<String>> campaigns = eventGenerator.getCampaigns();
+      campaigns = eventGenerator.getCampaigns();
       RedisHelper redisHelper = new RedisHelper(config);
       redisHelper.prepareRedis(campaigns);
       redisHelper.writeCampaignFile(campaigns);
@@ -139,16 +140,15 @@ public class AdvertisingTopologyFlinkWindows {
   private static StreamExecutionEnvironment setupEnvironment(BenchmarkConfig config) {
     Configuration configuration = new Configuration();
 //    configuration.setInteger(RestOptions.PORT, 8082);
-//    env.set
-    configuration.setString("taskmanager.numberOfTaskSlots", "9");
+//    configuration.setString("taskmanager.numberOfTaskSlots", "12");
     configuration.setBoolean(ConfigConstants.LOCAL_START_WEBSERVER, true);
     configuration.setInteger(RestOptions.PORT, 8082);
     StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(configuration);
     env.getConfig().setGlobalJobParameters(config.getParameters());
 
-//    if (config.checkpointsEnabled) {
-//      env.enableCheckpointing(config.checkpointInterval);
-//    }
+    if (config.checkpointsEnabled) {
+      env.enableCheckpointing(config.checkpointInterval);
+    }
 
     // use event time
     env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);

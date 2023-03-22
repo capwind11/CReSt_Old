@@ -4,12 +4,13 @@ name: StatefulWordCount
 mode: cross-region
 #mode: offline
 # resource configuration
-local_parallelism: 5
-remote_parallelism: 6
+local_parallelism: 1
+remote_parallelism: 3
 local_slot_group: local_group
 remote_slot_group: remote_group
 #isDebug: true
 # partition configuration
+
 local_operators:
   - sentence-source
 remote_operators:

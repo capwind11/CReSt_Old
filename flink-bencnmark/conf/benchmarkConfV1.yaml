@@ -19,6 +19,14 @@ redis.host: "localhost"
 process.hosts: 10
 process.cores: 12
 
+#STORM Specific
+storm.workers: 1
+storm.ackers: 2
+storm.highcard.redisthreads: 20
+
+#Spark Specific
+spark.batchtime: 2000
+
 #Flink specific
 group.id: "flink_yahoo_benchmark"
 flink.checkpoint.interval: 60000
@@ -26,31 +34,23 @@ add.result.sink: 1
 flink.highcard.checkpointURI: "file:///tmp/checkpoints"
 redis.threads: 20
 
-mode: cross-region
-
 local_operators:
     - 'Flat Map-0'
     - 'Flat Map'
     - 'Source: EventGenerator'
     - 'Filter'
-
+    - 'Projection'
 remote_operators:
     - 'Map'
-    - 'Projection'
     - 'Sink: Unnamed'
     - 'Flat Map-1'
     - 'Window(TumblingEventTimeWindows(10000), EventAndProcessingTimeTrigger, ReduceFunction$1, WindowFunction$2)'
     - 'Timestamps/Watermarks'
-
-local_parallelism: 4
-remote_parallelism: 2
-num_of_slots: 5
-
-
 # The following is for when running the EventGenerator directly rather than reading from Kafka
+
 use.local.event.generator: 1
 redis.flush: 1
 redis.db: 0
-load.target.hz: 5000000
+load.target.hz: 500000
 num.campaigns: 1000000
 

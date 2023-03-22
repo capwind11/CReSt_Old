@@ -61,16 +61,16 @@ public class ConfigTool {
             appConfig = new AppConfig();
             appConfig.setMode(mode);
         }
-
-        if ((appConfig.getDebug() != null && appConfig.getDebug()) || (params.has("debug") && params.getBoolean("debug"))) {
-            Configuration configuration = new Configuration();
+        Configuration configuration = new Configuration();
 //            Configuration conf = new Configuration();
 //            StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(conf);
-            // 定义一个配置 import org.apache.flink.configuration.Configuration;包下
+        // 定义一个配置 import org.apache.flink.configuration.Configuration;包下
 //            Configuration configuration = new Configuration();
 
 // 指定本地WEB-UI端口号
-            configuration.setInteger(RestOptions.PORT, 8082);
+        configuration.setInteger(RestOptions.PORT, 8081);
+        if ((appConfig.getDebug() != null && appConfig.getDebug()) || (params.has("debug") && params.getBoolean("debug"))) {
+
             configuration.setString("taskmanager.numberOfTaskSlots", "12");
 // 执行环境使用当前配置
             env = StreamExecutionEnvironment.getExecutionEnvironment(configuration);
@@ -79,12 +79,12 @@ public class ConfigTool {
         }
         env.setParallelism(params.getInt("p", 1));
 
-
         if (appConfig.getMode().equals("offline")) {
             env.disableOperatorChaining();
         }
+
         appConfig.setOthers(params.toMap());
-        appConfig.toMap();
+//        appConfig.toMap();
         env.getConfig().setGlobalJobParameters(appConfig);
         // mode: normal, cross-region, offline
         return env;
@@ -103,17 +103,17 @@ public class ConfigTool {
     }
 
     public static void configOperator(DataStream operator, AppConfig appConfig) {
-
-        String mode = appConfig.getMode();
-        if (mode.equals("cross-region")) {
-            if (appConfig.getLocalOperators().contains(operator.getTransformation().getUid())) {
-                operator.getTransformation().setParallelism(appConfig.getLocalParallelism());
-                operator.getTransformation().setSlotSharingGroup(appConfig.getLocalSlotGroup());
-            } else {
-                operator.getTransformation().setParallelism(appConfig.getRemoteParallelism());
-                operator.getTransformation().setSlotSharingGroup(appConfig.getRemoteSlotGroup());
-            }
-        }
+        return;
+//        String mode = appConfig.getMode();
+//        if (mode.equals("cross-region")) {
+//            if (appConfig.getLocalOperators().contains(operator.getTransformation().getUid())) {
+//                operator.getTransformation().setParallelism(appConfig.getLocalParallelism());
+//                operator.getTransformation().setSlotSharingGroup(appConfig.getLocalSlotGroup());
+//            } else {
+//                operator.getTransformation().setParallelism(appConfig.getRemoteParallelism());
+//                operator.getTransformation().setSlotSharingGroup(appConfig.getRemoteSlotGroup());
+//            }
+//        }
     }
 
     public static void configOperator(DataStreamSink<Tuple2<String, Integer>> operator, AppConfig appConfig) {

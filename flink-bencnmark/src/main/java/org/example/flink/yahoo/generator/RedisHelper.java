@@ -1,6 +1,6 @@
 package org.example.flink.yahoo.generator;
 
-import org.example.flink.yahoo.BenchmarkConfig;
+import org.example.flink.common.BenchmarkConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import redis.clients.jedis.Jedis;
