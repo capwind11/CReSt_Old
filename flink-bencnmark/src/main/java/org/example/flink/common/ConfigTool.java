@@ -1,132 +1,128 @@
 package org.example.flink.common;
 
-import com.alibaba.fastjson.JSON;
-import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.RestOptions;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.datastream.DataStreamSink;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.example.partition.entity.AppConfig;
+import org.apache.flink.streaming.api.graph.StreamGraph;
+import org.apache.flink.streaming.api.graph.StreamNode;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
-import java.io.BufferedReader;
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
-import java.io.FileReader;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
+public class ConfigTool extends ExecutionConfig.GlobalJobParameters {
 
-//name: StatefulWordCount
-//
-//        resource_config:
-//        local_parallelism: 1
-//        remote_parallelism: 2
-//        local_slot_group: local_group
-//        remote_slot_group: remote_group
-//
-//        partition_config:
-//        local_operator:
-//        - sentence-source
-//        remote_operator:
-//        - flatmap
-//        - count
-//        - dummy-sink
+    private String mode;
 
-public class ConfigTool {
+    private String className;
 
-    public static StreamExecutionEnvironment init(ParameterTool params) throws Exception {
+    private Map<String, Object> jobConfiguration;
+
+    public ConfigTool(String[] args) throws FileNotFoundException {
+
+        ParameterTool parameters = ParameterTool.fromArgs(args);
+        this.mode = parameters.get("mode", "offline");
+        if (parameters.has("config")) {
+            Yaml yml = new Yaml(new SafeConstructor());
+            this.jobConfiguration = (Map) yml.load(new FileInputStream(parameters.get("config")));
+            if (this.jobConfiguration.containsKey("mode")) {
+                this.mode = (String) this.jobConfiguration.get("mode");
+            }
+        } else {
+            this.jobConfiguration = new HashMap<>();
+            this.jobConfiguration.put("mode",  this.mode);
+        }
+
+        this.className = new Exception().getStackTrace()[1].getClassName();
+        this.className = this.className.substring(this.className.lastIndexOf('.')+1);
+    }
+
+    public StreamExecutionEnvironment setUpEvironment(BenchmarkConfig config) throws FileNotFoundException {
 
         StreamExecutionEnvironment env;
-        String mode = "normal";
-
-        if (params.has("mode")) {
-            mode = params.get("mode");
-        }
-
-        AppConfig appConfig;
-
-        if (params.has("cfg")) {
-            appConfig = loadPartitionConfig(params.get("cfg"));
-            if (params.has("p1")) {
-                appConfig.setLocalParallelism(params.getInt("p1"));
-            }
-            if (params.has("p2")) {
-                appConfig.setRemoteParallelism(params.getInt("p2"));
-            }
-        } else if (mode.equals("cross-region")) {
-            System.out.println("please specify the config file.");
-            throw new Exception("no config file specified under cross-region mode");
-        } else {
-            appConfig = new AppConfig();
-            appConfig.setMode(mode);
-        }
         Configuration configuration = new Configuration();
-//            Configuration conf = new Configuration();
-//            StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(conf);
-        // 定义一个配置 import org.apache.flink.configuration.Configuration;包下
-//            Configuration configuration = new Configuration();
-
-// 指定本地WEB-UI端口号
-        configuration.setInteger(RestOptions.PORT, 8081);
-        if ((appConfig.getDebug() != null && appConfig.getDebug()) || (params.has("debug") && params.getBoolean("debug"))) {
-
-            configuration.setString("taskmanager.numberOfTaskSlots", "12");
-// 执行环境使用当前配置
-            env = StreamExecutionEnvironment.getExecutionEnvironment(configuration);
+        if ((Boolean) this.jobConfiguration.getOrDefault("debug", true)) {
+            configuration.setInteger(RestOptions.PORT, (int) this.jobConfiguration.getOrDefault("rest.port", 8082));
+            if (this.jobConfiguration.getOrDefault("mode", "normal").equals("cross-region")) {
+                configuration.setInteger("taskmanager.numberOfTaskSlots", (int) this.jobConfiguration.getOrDefault("num_of_slots", 1));
+            }
+            configuration.setBoolean(ConfigConstants.LOCAL_START_WEBSERVER, true);
         } else {
-            env = StreamExecutionEnvironment.getExecutionEnvironment();
-        }
-        env.setParallelism(params.getInt("p", 1));
 
-        if (appConfig.getMode().equals("offline")) {
-            env.disableOperatorChaining();
+            configuration.setInteger(RestOptions.PORT, (int) this.jobConfiguration.getOrDefault("rest.port", 8081));
         }
 
-        appConfig.setOthers(params.toMap());
-//        appConfig.toMap();
-        env.getConfig().setGlobalJobParameters(appConfig);
-        // mode: normal, cross-region, offline
+        env = StreamExecutionEnvironment.getExecutionEnvironment(configuration);
+        env.setParallelism((int) this.jobConfiguration.getOrDefault("parallelism", 1));
+
+        env.getConfig().setGlobalJobParameters(this);
         return env;
     }
 
-    public static AppConfig loadPartitionConfig(String fileName) throws FileNotFoundException {
+    public void reconfigurationAndSubmit(StreamExecutionEnvironment env) throws Exception {
 
-        BufferedReader br = new BufferedReader(new FileReader(fileName));
+        HashMap<String, Integer> taskNameMap = new HashMap<String, Integer>();
+        String jobName = (String) this.jobConfiguration.getOrDefault("job_name", className+"_"+this.mode);
+        StreamGraph streamGraph = env.getStreamGraph(false);
+//        env.getTransformations().get(0).set
+        Collection<StreamNode> streamNodes = streamGraph.getStreamNodes();
+        for (StreamNode streamNode:streamNodes) {
+            String operatorDescription = streamNode.getOperatorDescription();
+            if (!taskNameMap.containsKey(operatorDescription)) {
+                taskNameMap.put(operatorDescription, 0);
+            }
+            streamNode.setOperatorDescription(operatorDescription +"-"+taskNameMap.get(operatorDescription));
+            taskNameMap.put(operatorDescription, taskNameMap.get(operatorDescription)+1);
+        }
 
-        Yaml yaml = new Yaml();
-        Map<String, Object> config = (Map<String, Object>) yaml.load(br);
-
-        AppConfig appConfig = JSON.parseObject(JSON.toJSONString(config), AppConfig.class);
-
-        return appConfig;
-    }
-
-    public static void configOperator(DataStream operator, AppConfig appConfig) {
-        return;
-//        String mode = appConfig.getMode();
-//        if (mode.equals("cross-region")) {
-//            if (appConfig.getLocalOperators().contains(operator.getTransformation().getUid())) {
-//                operator.getTransformation().setParallelism(appConfig.getLocalParallelism());
-//                operator.getTransformation().setSlotSharingGroup(appConfig.getLocalSlotGroup());
-//            } else {
-//                operator.getTransformation().setParallelism(appConfig.getRemoteParallelism());
-//                operator.getTransformation().setSlotSharingGroup(appConfig.getRemoteSlotGroup());
-//            }
-//        }
-    }
-
-    public static void configOperator(DataStreamSink<Tuple2<String, Integer>> operator, AppConfig appConfig) {
-
-        String mode = appConfig.getMode();
-        if (mode.equals("cross-region")) {
-            if (appConfig.getLocalOperators().contains(operator.getTransformation().getUid())) {
-                operator.getTransformation().setParallelism(appConfig.getLocalParallelism());
-                operator.getTransformation().setSlotSharingGroup(appConfig.getLocalSlotGroup());
-            } else {
-                operator.getTransformation().setParallelism(appConfig.getRemoteParallelism());
-                operator.getTransformation().setSlotSharingGroup(appConfig.getRemoteSlotGroup());
+        if (this.mode.equals("cross-region")) {
+            List<String> border = (List<String>) this.jobConfiguration.get("border");
+            List<String> localOpearators = (List<String>) this.jobConfiguration.get("local_operators");
+            List<String> remoteOpearators = (List<String>) this.jobConfiguration.get("remote_operators");
+            int localParallelism = (int) this.jobConfiguration.get("local_parallelism");
+            int remoteParallelism = (int) this.jobConfiguration.get("remote_parallelism");;
+            for (StreamNode streamNode:streamNodes) {
+                if (localOpearators.contains(streamNode.getOperatorName())) {
+                    streamNode.setParallelism(localParallelism);
+                    streamNode.setSlotSharingGroup("local");
+                } else {
+                    streamNode.setParallelism(remoteParallelism);
+                    streamNode.setSlotSharingGroup("remote");
+                }
             }
         }
+        if (this.mode.equals("offline")) {
+            env.disableOperatorChaining();
+
+            int operatorCount = 0;
+            for (StreamNode streamNode: streamNodes) {
+                streamNode.setSlotSharingGroup("group"+operatorCount);
+                operatorCount++;
+            }
+        }
+
+        streamGraph.setJobName(jobName);
+        env.execute(streamGraph);
     }
+
+    @Override
+    public Map<String, String> toMap() {
+        Map<String, String> configMap = new HashMap<>();
+        for (Map.Entry<String,Object> e : this.jobConfiguration.entrySet()) {
+            {
+                configMap.put(e.getKey(), e.getValue().toString());
+            }
+        }
+        return configMap;
+    }
+
+
 }

@@ -94,11 +94,12 @@ public class BenchmarkConfig implements Serializable{
    * Create a config directly from the command line arguments
    */
   public static BenchmarkConfig fromArgs(String[] args) throws FileNotFoundException {
-    if(args.length < 1){
+    ParameterTool parameters = ParameterTool.fromArgs(args);
+    if(!parameters.has("config")){
       return new BenchmarkConfig("conf/benchmarkConf.yaml");
     }
     else{
-      return new BenchmarkConfig(args[1]);
+      return new BenchmarkConfig(parameters.get("config"));
     }
   }
 

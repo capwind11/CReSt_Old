@@ -2,19 +2,19 @@
 # Licensed under the terms of the Apache License 2.0. Please see LICENSE file in the project root for terms.
 
 kafka.brokers:
-    - "localhost"
+    - "127.0.0.1"
 kafka.port: 9092
 kafka.topic: "ads"
-kafka.partitions: 20
+kafka.partitions: 2
 kafka.zookeeper.path: /
 
 akka.zookeeper.path: /akkaQuery
 
 zookeeper.servers:
-    - "localhost"
+    - "127.0.0.1"
 zookeeper.port: 2181
 
-redis.host: "localhost"
+redis.host: "127.0.0.1"
 
 process.hosts: 10
 process.cores: 12
@@ -26,12 +26,15 @@ add.result.sink: 1
 flink.highcard.checkpointURI: "file:///tmp/checkpoints"
 redis.threads: 20
 
-mode: cross-region
-
+mode: normal
+debug: true
 local_operators:
     - 'Flat Map-0'
     - 'Flat Map'
-    - 'Source: EventGenerator'
+    - 'Source: Kafka'
+    - 'Filter'
+
+border:
     - 'Filter'
 
 remote_operators:
@@ -42,15 +45,15 @@ remote_operators:
     - 'Window(TumblingEventTimeWindows(10000), EventAndProcessingTimeTrigger, ReduceFunction$1, WindowFunction$2)'
     - 'Timestamps/Watermarks'
 
-local_parallelism: 4
+local_parallelism: 3
 remote_parallelism: 2
-num_of_slots: 5
+num_of_slots: 20
+parallelism: 1
 
 
 # The following is for when running the EventGenerator directly rather than reading from Kafka
-use.local.event.generator: 1
+#use.local.event.generator: 1
 redis.flush: 1
 redis.db: 0
-load.target.hz: 5000000
+load.target.hz: 1000
 num.campaigns: 1000000
-

@@ -4,16 +4,14 @@
  */
 package org.example.flink.yahoo;
 import edu.umd.cs.findbugs.annotations.Nullable;
-import org.apache.flink.api.dag.Transformation;
+import org.apache.flink.api.java.tuple.*;
 import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.RestOptions;
 import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
 import org.apache.flink.streaming.api.functions.sink.SinkFunction;
-import org.apache.flink.streaming.api.graph.StreamGraph;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.example.flink.common.BenchmarkConfig;
-import org.example.flink.common.ConfigToolV2;
-import org.example.flink.v1.nexmark.sinks.DummySink;
+import org.example.flink.common.ConfigTool;
 import org.example.flink.yahoo.common.RedisAdCampaignCache;
 import org.example.flink.yahoo.common.ThroughputLogger;
 import org.example.flink.yahoo.generator.EventGeneratorSource;
@@ -22,10 +20,6 @@ import net.minidev.json.JSONObject;
 import net.minidev.json.parser.JSONParser;
 import org.apache.flink.api.common.functions.*;
 import org.apache.flink.api.common.state.ValueState;
-import org.apache.flink.api.java.tuple.Tuple;
-import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.api.java.tuple.Tuple3;
-import org.apache.flink.api.java.tuple.Tuple7;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -45,6 +39,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import redis.clients.jedis.Jedis;
 
+import java.io.PrintStream;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -64,20 +59,19 @@ public class AdvertisingTopologyFlinkWindows {
   public static void main(final String[] args) throws Exception {
 
     BenchmarkConfig config = BenchmarkConfig.fromArgs(args);
-    ConfigToolV2 configToolV2 = new ConfigToolV2(args);
-    StreamExecutionEnvironment env = setupEnvironment(config);
-//    env.disableOperatorChaining();
-//    env.setParallelism(1);
-    DataStream<String> rawMessageStream = streamSource(config, env);
+    ConfigTool configTool = new ConfigTool(args);
+    StreamExecutionEnvironment env = configTool.setUpEvironment(config);
 
-    // rawMessageStream.getTransformation().setSlotSharingGroup("local");
+    DataStream<String> rawMessageStream = streamSource(config, env);
+//    rawMessageStream.print();
     // log performance
-    rawMessageStream.flatMap(new ThroughputLogger<String>(240, 1_000_000));
+//    rawMessageStream.flatMap(new ThroughputLogger<String>(240, 1_000_000));
 
     DataStream<Tuple2<String, String>> joinedAdImpressions = rawMessageStream
       .flatMap(new DeserializeBolt()).name("Flat Map-0")
       .filter(new EventFilterBolt())
       .<Tuple2<String, String>>project(2, 5) //ad_id, event_time
+      .rebalance()
       .flatMap(new RedisJoinBolt(config)).name("Flat Map-1") // campaign_id, event_time
       .assignTimestampsAndWatermarks(new AdTimestampExtractor()); // extract timestamps and generate watermarks from event_time
 
@@ -90,23 +84,24 @@ public class AdvertisingTopologyFlinkWindows {
     windowStream.trigger(new EventAndProcessingTimeTrigger());
 
     // campaign_id, window end time, count
-    DataStream<Tuple3<String, String, Long>> result =
+    DataStream<Tuple4<String, String, String, Long>> result =
       windowStream.apply(sumReduceFunction(), sumWindowFunction());
 
     // write result to redis
-//    result.addSink(new RedisResultSinkOptimized(config));
+    result.addSink(new RedisResultSinkOptimized(config));
 //    if (config.getParameters().has("add.result.sink.optimized")) {
 //      result.addSink(new RedisResultSinkOptimized(config));
 //    } else {
 ////      result.addSink(new DummySink<>());
 //      result.addSink(new RedisResultSink(config));
 //    }
-    result.addSink(new SinkFunction<Tuple3<String, String, Long>>() {
-
-      @Override
-      public void invoke(Tuple3<String, String, Long> value, Context ctx) throws Exception {}
-    });
-    configToolV2.reconfigurationAndSubmit(env);
+//    result.addSink(new SinkFunction<Tuple3<String, String, Long>>() {
+//
+//      @Override
+//      public void invoke(Tuple3<String, String, Long> value, Context ctx) throws Exception {}
+//    });
+//    env.setParallelism(1);
+    configTool.reconfigurationAndSubmit(env);
   }
 
   /**
@@ -134,34 +129,14 @@ public class AdvertisingTopologyFlinkWindows {
   }
 
   /**
-   * Setup Flink environment
-   */
-  private static StreamExecutionEnvironment setupEnvironment(BenchmarkConfig config) {
-    Configuration configuration = new Configuration();
-//    configuration.setInteger(RestOptions.PORT, 8082);
-//    env.set
-    configuration.setString("taskmanager.numberOfTaskSlots", "9");
-    configuration.setBoolean(ConfigConstants.LOCAL_START_WEBSERVER, true);
-    configuration.setInteger(RestOptions.PORT, 8082);
-    StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(configuration);
-    env.getConfig().setGlobalJobParameters(config.getParameters());
-
-//    if (config.checkpointsEnabled) {
-//      env.enableCheckpointing(config.checkpointInterval);
-//    }
-
-    // use event time
-    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
-    return env;
-  }
-
-  /**
    * Sum - window reduce function
    */
   private static ReduceFunction<Tuple3<String, String, Long>> sumReduceFunction() {
     return new ReduceFunction<Tuple3<String, String, Long>>() {
       @Override
       public Tuple3<String, String, Long> reduce(Tuple3<String, String, Long> t0, Tuple3<String, String, Long> t1) throws Exception {
+
+//        System.out.printf("latency reduce: %d\n", System.currentTimeMillis()-Long.parseLong(t1.f1));
         t0.f2 += t1.f2;
         return t0;
       }
@@ -171,17 +146,18 @@ public class AdvertisingTopologyFlinkWindows {
   /**
    * Sum - Window function, summing already happened in reduce function
    */
-  private static WindowFunction<Tuple3<String, String, Long>, Tuple3<String, String, Long>, Tuple, TimeWindow> sumWindowFunction() {
-    return new WindowFunction<Tuple3<String, String, Long>, Tuple3<String, String, Long>, Tuple, TimeWindow>() {
+  private static WindowFunction<Tuple3<String, String, Long>, Tuple4<String, String, String, Long>, Tuple, TimeWindow> sumWindowFunction() {
+    return new WindowFunction<Tuple3<String, String, Long>, Tuple4<String, String, String, Long>, Tuple, TimeWindow>() {
       @Override
-      public void apply(Tuple keyTuple, TimeWindow window, Iterable<Tuple3<String, String, Long>> values, Collector<Tuple3<String, String, Long>> out) throws Exception {
+      public void apply(Tuple keyTuple, TimeWindow window, Iterable<Tuple3<String, String, Long>> values, Collector<Tuple4<String, String, String, Long>> out) throws Exception {
         Iterator<Tuple3<String, String, Long>> valIter = values.iterator();
         Tuple3<String, String, Long> tuple = valIter.next();
         if (valIter.hasNext()) {
           throw new IllegalStateException("Unexpected");
         }
-        tuple.f1 = Long.toString(window.getEnd());
-        out.collect(tuple); // collect end time here
+        Tuple4<String, String, String, Long> tuple4 = new Tuple4<>(tuple.f0, Long.toString(window.getEnd()), tuple.f1, tuple.f2);
+//        tuple.f1 = Long.toString(window.getEnd());
+        out.collect(tuple4); // collect end time here
       }
     };
   }
@@ -189,7 +165,7 @@ public class AdvertisingTopologyFlinkWindows {
   /**
    * Configure Kafka source
    */
-  private static FlinkKafkaConsumer<String> kafkaSource(BenchmarkConfig config) {
+  public static FlinkKafkaConsumer<String> kafkaSource(BenchmarkConfig config) {
     return new FlinkKafkaConsumer<>(
       config.kafkaTopic,
       new SimpleStringSchema(),
@@ -201,20 +177,27 @@ public class AdvertisingTopologyFlinkWindows {
    */
   private static class EventAndProcessingTimeTrigger extends Trigger<Object, TimeWindow> {
 
+    private static long count=0;
+    private static long timeStamp = System.currentTimeMillis();;
     @Override
     public TriggerResult onElement(Object element, long timestamp, TimeWindow window, TriggerContext ctx) throws Exception {
       ctx.registerEventTimeTimer(window.maxTimestamp());
       // register system timer only for the first time
-      ValueState<Boolean> firstTimerSet = ctx.getKeyValueState("firstTimerSet", Boolean.class, false);
-      if (!firstTimerSet.value()) {
-        ctx.registerProcessingTimeTimer(System.currentTimeMillis() + 1000L);
-        firstTimerSet.update(true);
-      }
+
+//      ValueState<Boolean> firstTimerSet = ctx.getKeyValueState("firstTimerSet", Boolean.class, false);
+//      if (!firstTimerSet.value()) {
+//        ctx.registerProcessingTimeTimer(System.currentTimeMillis() + 1000L);
+//        firstTimerSet.update(true);
+//      }
       return TriggerResult.CONTINUE;
     }
 
     @Override
     public TriggerResult onEventTime(long time, TimeWindow window, TriggerContext ctx) {
+
+      System.out.printf("EventTime trigger interval: %d\n", System.currentTimeMillis() - window.maxTimestamp());
+//      timeStamp = System.currentTimeMillis();
+
       return TriggerResult.FIRE_AND_PURGE;
     }
 
@@ -226,7 +209,10 @@ public class AdvertisingTopologyFlinkWindows {
     @Override
     public TriggerResult onProcessingTime(long time, TimeWindow window, TriggerContext ctx) throws Exception {
       // schedule next timer
-      ctx.registerProcessingTimeTimer(System.currentTimeMillis() + 1000L);
+//      System.out.printf("Processing trigger interval: %d\n", System.currentTimeMillis() - timeStamp);
+//      timeStamp = System.currentTimeMillis();
+
+//      ctx.registerProcessingTimeTimer(System.currentTimeMillis() + 1000L);
       return TriggerResult.FIRE;
     }
   }
@@ -403,9 +389,11 @@ public class AdvertisingTopologyFlinkWindows {
   /**
    * Simplified version of Redis data structure
    */
-  private static class RedisResultSinkOptimized extends RichSinkFunction<Tuple3<String, String, Long>> {
+  private static class RedisResultSinkOptimized extends RichSinkFunction<Tuple4<String, String, String, Long>> {
     private final BenchmarkConfig config;
     private Jedis flushJedis;
+
+    private static long timeStamp = System.currentTimeMillis();
 
     public RedisResultSinkOptimized(BenchmarkConfig config){
       this.config = config;
@@ -419,9 +407,10 @@ public class AdvertisingTopologyFlinkWindows {
     }
 
     @Override
-    public void invoke(Tuple3<String, String, Long> result) throws Exception {
+    public void invoke(Tuple4<String, String, String, Long> result) throws Exception {
       // set campaign id -> (window-timestamp, count)
-      flushJedis.hset(result.f0, result.f1, Long.toString(result.f2));
+      System.out.printf("record: %s window latency: %d\n", result.f0, System.currentTimeMillis()-Long.parseLong(result.f1));
+      flushJedis.hset(result.f0, result.f1, Long.toString(result.f3));
     }
 
     @Override

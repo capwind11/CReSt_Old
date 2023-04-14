@@ -51,7 +51,8 @@ public class EventGeneratorSource extends LoadGeneratorSource<String> {
     sb.append("\",\"ad_type\":\"");
     sb.append("banner78"); // value is immediately discarded. The original generator would put a string with 38/5 = 7.6 chars. We put 8.
     sb.append("\",\"event_type\":\"");
-    sb.append(eventTypes[eventsIdx++]);
+    sb.append("view");
+//    sb.append(eventTypes[eventsIdx++]);
     sb.append("\",\"event_time\":\"");
     sb.append(System.currentTimeMillis());
     sb.append("\",\"ip_address\":\"1.2.3.4\"}");
